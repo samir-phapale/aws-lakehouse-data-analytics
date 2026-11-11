@@ -21,6 +21,8 @@ locals {
     ingest = "mysql_rds/ingest_mysql_to_landing.py"
     stream = "kafka_streaming/stream_msk_to_landing.py"
     raw    = "landing_to_raw/landing_to_raw.py"
+    # Helper module for the raw job, passed with --extra-py-files
+    raw_days = "landing_to_raw/ingest_days.py"
   }
 
   # Each job script imports its helper modules, which Glue puts on the Python path via --extra-py-files
@@ -229,6 +231,7 @@ resource "aws_glue_job" "landing_to_raw" {
   }
 
   default_arguments = merge(local.common_job_arguments, local.delta_job_arguments, {
+    "--extra-py-files"  = "${local.scripts_uri}/${local.scripts.raw_days}"
     "--LANDING_BUCKET"  = var.landing_bucket_name
     "--RAW_BUCKET"      = var.raw_bucket_name
     "--SOURCES"         = "rds,files,stream"

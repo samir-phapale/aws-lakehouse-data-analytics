@@ -34,8 +34,9 @@ created or updated are checked (deletes and no-ops are skipped; a replacement co
 | `enable_key_rotation` true | `aws_kms_key` |
 | Tags `Project`, `Environment`, `ManagedBy` present | every resource with `tags_all` |
 
-Limit: an IAM policy document that references resources created in the same plan is only known
-at apply time, so it is skipped on that first plan and checked on every later one.
+The IAM rule also checks policies the plan leaves unchanged. A policy document that references
+resources created in the same plan is only known at apply time, so it is skipped on that first plan
+and checked on every later one.
 
 Run locally (conftest binary from the GitHub releases of open-policy-agent/conftest):
 

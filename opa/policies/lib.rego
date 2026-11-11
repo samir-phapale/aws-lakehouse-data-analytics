@@ -1,5 +1,6 @@
 # Helpers for the plan policies; input is `terraform show -json tfplan`.
-# Deletes and no-ops are skipped; a replacement (delete + create) is checked as a create.
+# changes(): creates and updates only (a replacement counts as a create).
+# present(): every resource that exists after apply, including no-ops.
 package main
 
 all_changes := [rc |
@@ -11,6 +12,13 @@ all_changes := [rc |
 changes(resource_type) := [rc |
 	some rc in all_changes
 	rc.type == resource_type
+]
+
+present(resource_type) := [rc |
+	some rc in input.resource_changes
+	rc.mode == "managed"
+	rc.type == resource_type
+	rc.change.actions != ["delete"]
 ]
 
 is_create_or_update(rc) if "create" in rc.change.actions

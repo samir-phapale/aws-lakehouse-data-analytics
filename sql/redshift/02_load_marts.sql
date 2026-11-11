@@ -34,5 +34,8 @@ CREATE TABLE marts.agg_delivery_performance AS SELECT * FROM spectrum_curated.ag
 DROP TABLE IF EXISTS marts.agg_review_vs_delivery;
 CREATE TABLE marts.agg_review_vs_delivery AS SELECT * FROM spectrum_curated.agg_review_vs_delivery;
 
+DROP TABLE IF EXISTS marts.agg_payment_mix;
+CREATE TABLE marts.agg_payment_mix AS SELECT * FROM spectrum_curated.agg_payment_mix;
+
 DROP TABLE IF EXISTS marts.agg_tpch_customer_segment;
 CREATE TABLE marts.agg_tpch_customer_segment AS SELECT * FROM spectrum_curated.agg_tpch_customer_segment;

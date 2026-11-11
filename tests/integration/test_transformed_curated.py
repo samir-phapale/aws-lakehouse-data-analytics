@@ -17,7 +17,7 @@ CURATED_TABLES = [
     "dim_date", "dim_geography", "dim_customer", "dim_seller", "dim_product",
     "fact_order_items", "fact_orders",
     "agg_daily_sales", "agg_seller_performance", "agg_delivery_performance",
-    "agg_review_vs_delivery", "agg_tpch_customer_segment",
+    "agg_review_vs_delivery", "agg_payment_mix", "agg_tpch_customer_segment",
 ]
 
 

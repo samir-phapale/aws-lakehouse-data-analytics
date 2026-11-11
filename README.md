@@ -58,7 +58,7 @@ Every service and connection in the landing and raw zones:
 | `sql/athena/`, `sql/redshift/` | Saved Athena queries; Spectrum schema, mart load and analyst queries |
 | `scripts/` | Data upload and run helpers; `common.sh` holds the shared Terraform-output and Glue-run functions |
 | `tests/unit/`, `tests/integration/` | Local PySpark tests of the rules; pytest checks against the deployed buckets and catalog |
-| `docs/` | Context, progress, decisions, architecture, deployment, plans |
+| `docs/` | Architecture and deployment |
 
 ## Deploy
 
@@ -102,4 +102,5 @@ aws codebuild start-build --project-name lakehouse-dev-destroy \
 
 - [docs/deployment/README.md](docs/deployment/README.md) - deploy, load data, verify, destroy
 - [docs/architecture/landing-raw-layer.md](docs/architecture/landing-raw-layer.md) - landing and raw services
+- [docs/architecture/transformed-curated-analytics.md](docs/architecture/transformed-curated-analytics.md) - transformed, DataBrew gate, curated, Athena and Redshift
 - [cicd/README.md](cicd/README.md) - pipeline, OPA policies, bootstrap
