@@ -1,0 +1,64 @@
+# Plan stage: checks, unit tests, terraform plan of the main root and OPA policies on the plan.
+# TF_STATE_* and TF_VAR_FILE come from the CodeBuild project.
+version: 0.2
+
+env:
+  variables:
+    # Must be >= the version that last wrote the main root's state (Terraform refuses older)
+    TERRAFORM_VERSION: "1.15.4"
+    TERRAFORM_SHA256: "a71695fa6db9344db02ff1adb69cce891c1b2b4dc31c08df0dd4a12101a33b26"
+    CONFTEST_VERSION: "0.71.1"
+    CONFTEST_SHA256: "c3f6b2a753bd56e377a1e51a95ae3e057f926f2e9139f7d5b5dfbbaf810f7985"
+    TF_IN_AUTOMATION: "true"
+    TF_INPUT: "false"
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+      java: corretto21
+    commands:
+      - cd /tmp
+      - curl -sSfLo terraform.zip "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+      - echo "${TERRAFORM_SHA256}  terraform.zip" | sha256sum -c -
+      - unzip -o -q terraform.zip -d /usr/local/bin
+      - curl -sSfLo conftest.tar.gz "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+      - echo "${CONFTEST_SHA256}  conftest.tar.gz" | sha256sum -c -
+      - tar -xzf conftest.tar.gz -C /usr/local/bin conftest
+      - cd "${CODEBUILD_SRC_DIR}"
+      - terraform version
+      - conftest --version
+      - java -version
+      - pip install --quiet -r requirements.txt
+
+  pre_build:
+    commands:
+      - terraform fmt -check -recursive
+      - conftest verify -p opa/policies -p opa/tests
+      - pytest tests/unit -q
+      - terraform -chdir=cicd/terraform init -backend=false
+      - terraform -chdir=cicd/terraform validate
+
+  build:
+    commands:
+      - cd "${CODEBUILD_SRC_DIR}/infrastructure/terraform"
+      # backend.hcl is gitignored, so the backend settings come from project variables
+      - >-
+        terraform init
+        -backend-config="bucket=${TF_STATE_BUCKET}"
+        -backend-config="key=${TF_STATE_KEY}"
+        -backend-config="region=${TF_STATE_REGION}"
+        -backend-config="encrypt=true"
+        -backend-config="use_lockfile=true"
+      - terraform validate
+      - terraform plan -var-file="${TF_VAR_FILE}" -out=tfplan
+      - terraform show -json tfplan > plan.json
+      - conftest test plan.json -p ../../opa/policies
+
+artifacts:
+  # Source plus tfplan and the lock file; Apply downloads the providers again
+  files:
+    - "**/*"
+  exclude-paths:
+    - "infrastructure/terraform/.terraform/**/*"
+    - "cicd/terraform/.terraform/**/*"

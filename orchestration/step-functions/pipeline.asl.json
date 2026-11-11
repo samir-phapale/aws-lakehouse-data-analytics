@@ -1,0 +1,306 @@
+{
+  "Comment": "Lakehouse batch pipeline: sources -> landing -> raw -> transformed -> DataBrew gate -> curated -> catalog -> Redshift. Input {\"skip_ingest\": true} starts at landing -> raw.",
+  "StartAt": "Config",
+  "States": {
+    "Config": {
+      "Type": "Pass",
+      "Result": {
+        "dq": ${dq_jobs},
+        "crawlers": ${crawlers}
+      },
+      "ResultPath": "$.config",
+      "Next": "SkipIngest?"
+    },
+    "SkipIngest?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "And": [
+            { "Variable": "$.skip_ingest", "IsPresent": true },
+            { "Variable": "$.skip_ingest", "BooleanEquals": true }
+          ],
+          "Next": "LandingToRaw"
+        }
+      ],
+      "Default": "IngestSources"
+    },
+    "IngestSources": {
+      "Type": "Parallel",
+      "Comment": "MySQL -> landing (Glue JDBC) and source files -> landing (DataSync). The MSK stream lands continuously and is not started here.",
+      "Branches": [
+        {
+          "StartAt": "MySqlToLanding",
+          "States": {
+            "MySqlToLanding": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": { "JobName": "${ingest_job}" },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "StartDataSync",
+          "States": {
+            "StartDataSync": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:datasync:startTaskExecution",
+              "Parameters": { "TaskArn": "${datasync_task_arn}" },
+              "ResultPath": "$.datasync",
+              "Next": "WaitDataSync"
+            },
+            "WaitDataSync": { "Type": "Wait", "Seconds": 30, "Next": "CheckDataSync" },
+            "CheckDataSync": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:datasync:describeTaskExecution",
+              "Parameters": { "TaskExecutionArn.$": "$.datasync.TaskExecutionArn" },
+              "ResultSelector": { "Status.$": "$.Status" },
+              "ResultPath": "$.datasync_status",
+              "Next": "DataSyncDone?"
+            },
+            "DataSyncDone?": {
+              "Type": "Choice",
+              "Choices": [
+                { "Variable": "$.datasync_status.Status", "StringEquals": "SUCCESS", "Next": "DataSyncSucceeded" },
+                { "Variable": "$.datasync_status.Status", "StringEquals": "ERROR", "Next": "DataSyncFailed" }
+              ],
+              "Default": "WaitDataSync"
+            },
+            "DataSyncSucceeded": { "Type": "Succeed" },
+            "DataSyncFailed": { "Type": "Fail", "Error": "DataSyncFailed", "Cause": "DataSync task execution ended in ERROR" }
+          }
+        }
+      ],
+      "ResultPath": null,
+      "Next": "LandingToRaw",
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "NotifyFailure" }]
+    },
+    "LandingToRaw": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": { "JobName": "${landing_to_raw_job}" },
+      "ResultPath": null,
+      "Next": "RawToTransformed",
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "NotifyFailure" }]
+    },
+    "RawToTransformed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": { "JobName": "${raw_to_transformed_job}" },
+      "ResultPath": null,
+      "Next": "DataQuality",
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "NotifyFailure" }]
+    },
+    "DataQuality": {
+      "Type": "Map",
+      "Comment": "DataBrew profile job + ruleset per transformed table; any failed rule stops the pipeline before curated",
+      "ItemsPath": "$.config.dq",
+      "MaxConcurrency": 5,
+      "ItemProcessor": {
+        "ProcessorConfig": { "Mode": "INLINE" },
+        "StartAt": "ProfileJob",
+        "States": {
+          "ProfileJob": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::databrew:startJobRun.sync",
+            "Parameters": { "Name.$": "$.job" },
+            "ResultSelector": { "ReportKeys.$": "$.Outputs[*].Location.Key" },
+            "ResultPath": "$.run",
+            "Next": "Gate"
+          },
+          "Gate": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${gate_function_arn}",
+              "Payload": {
+                "table.$": "$.table",
+                "bucket": "${transformed_bucket}",
+                "report_keys.$": "$.run.ReportKeys"
+              }
+            },
+            "ResultSelector": {
+              "table.$": "$.Payload.table",
+              "passed.$": "$.Payload.passed",
+              "failed_rules.$": "$.Payload.failed_rules"
+            },
+            "Next": "Passed?"
+          },
+          "Passed?": {
+            "Type": "Choice",
+            "Choices": [{ "Variable": "$.passed", "BooleanEquals": true, "Next": "TablePassed" }],
+            "Default": "TableFailed"
+          },
+          "TablePassed": { "Type": "Succeed" },
+          "TableFailed": {
+            "Type": "Fail",
+            "Error": "DataQualityFailed",
+            "CausePath": "States.JsonToString($)"
+          }
+        }
+      },
+      "ResultPath": null,
+      "Next": "TransformedToCurated",
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "NotifyFailure" }]
+    },
+    "TransformedToCurated": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": { "JobName": "${transformed_to_curated_job}" },
+      "ResultPath": null,
+      "Next": "Crawl",
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "NotifyFailure" }]
+    },
+    "Crawl": {
+      "Type": "Map",
+      "Comment": "Register the Delta tables of every zone in the Glue catalog (and the Spectrum manifests)",
+      "ItemsPath": "$.config.crawlers",
+      "ItemSelector": { "name.$": "$$.Map.Item.Value" },
+      "MaxConcurrency": 4,
+      "ItemProcessor": {
+        "ProcessorConfig": { "Mode": "INLINE" },
+        "StartAt": "StartCrawler",
+        "States": {
+          "StartCrawler": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler",
+            "Parameters": { "Name.$": "$.name" },
+            "ResultPath": null,
+            "Next": "WaitCrawler",
+            "Catch": [{ "ErrorEquals": ["Glue.CrawlerRunningException"], "ResultPath": null, "Next": "WaitCrawler" }]
+          },
+          "WaitCrawler": { "Type": "Wait", "Seconds": 30, "Next": "GetCrawler" },
+          "GetCrawler": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:glue:getCrawler",
+            "Parameters": { "Name.$": "$.name" },
+            "ResultSelector": { "crawler.$": "$.Crawler" },
+            "ResultPath": "$.status",
+            "Next": "CrawlerReady?"
+          },
+          "CrawlerReady?": {
+            "Type": "Choice",
+            "Choices": [{ "Variable": "$.status.crawler.State", "StringEquals": "READY", "Next": "CrawlSucceeded?" }],
+            "Default": "WaitCrawler"
+          },
+          "CrawlSucceeded?": {
+            "Type": "Choice",
+            "Choices": [{ "Variable": "$.status.crawler.LastCrawl.Status", "StringEquals": "SUCCEEDED", "Next": "CrawlDone" }],
+            "Default": "CrawlFailed"
+          },
+          "CrawlDone": { "Type": "Succeed" },
+          "CrawlFailed": { "Type": "Fail", "Error": "CrawlerFailed", "CausePath": "States.JsonToString($.status.crawler.LastCrawl)" }
+        }
+      },
+      "ResultPath": null,
+      "Next": "CreateExternalSchema",
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "NotifyFailure" }]
+    },
+    "CreateExternalSchema": {
+      "Type": "Task",
+      "Comment": "Redshift Spectrum schema over the curated catalog tables",
+      "Resource": "arn:aws:states:::aws-sdk:redshiftdata:executeStatement",
+      "Parameters": {
+        "WorkgroupName": "${redshift_workgroup}",
+        "Database": "${redshift_database}",
+        "SecretArn": "${redshift_secret_arn}",
+        "Sql": ${external_schema_sql}
+      },
+      "ResultSelector": { "Id.$": "$.Id" },
+      "ResultPath": "$.sql",
+      "Next": "WaitSchema",
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "NotifyFailure" }]
+    },
+    "WaitSchema": { "Type": "Wait", "Seconds": 10, "Next": "CheckSchema" },
+    "CheckSchema": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:redshiftdata:describeStatement",
+      "Parameters": { "Id.$": "$.sql.Id" },
+      "ResultSelector": { "Id.$": "$.Id", "Status.$": "$.Status" },
+      "ResultPath": "$.sql",
+      "Next": "SchemaDone?",
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "NotifyFailure" }]
+    },
+    "SchemaDone?": {
+      "Type": "Choice",
+      "Choices": [
+        { "Variable": "$.sql.Status", "StringEquals": "FINISHED", "Next": "LoadMarts" },
+        { "Or": [
+            { "Variable": "$.sql.Status", "StringEquals": "FAILED" },
+            { "Variable": "$.sql.Status", "StringEquals": "ABORTED" }
+          ], "Next": "SqlError" }
+      ],
+      "Default": "WaitSchema"
+    },
+    "LoadMarts": {
+      "Type": "Task",
+      "Comment": "Full refresh of the marts schema from Spectrum, one transaction",
+      "Resource": "arn:aws:states:::aws-sdk:redshiftdata:batchExecuteStatement",
+      "Parameters": {
+        "WorkgroupName": "${redshift_workgroup}",
+        "Database": "${redshift_database}",
+        "SecretArn": "${redshift_secret_arn}",
+        "Sqls": ${load_marts_sql}
+      },
+      "ResultSelector": { "Id.$": "$.Id" },
+      "ResultPath": "$.sql",
+      "Next": "WaitLoad",
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "NotifyFailure" }]
+    },
+    "WaitLoad": { "Type": "Wait", "Seconds": 20, "Next": "CheckLoad" },
+    "CheckLoad": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:redshiftdata:describeStatement",
+      "Parameters": { "Id.$": "$.sql.Id" },
+      "ResultSelector": { "Id.$": "$.Id", "Status.$": "$.Status" },
+      "ResultPath": "$.sql",
+      "Next": "LoadDone?",
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "NotifyFailure" }]
+    },
+    "LoadDone?": {
+      "Type": "Choice",
+      "Choices": [
+        { "Variable": "$.sql.Status", "StringEquals": "FINISHED", "Next": "NotifySuccess" },
+        { "Or": [
+            { "Variable": "$.sql.Status", "StringEquals": "FAILED" },
+            { "Variable": "$.sql.Status", "StringEquals": "ABORTED" }
+          ], "Next": "SqlError" }
+      ],
+      "Default": "WaitLoad"
+    },
+    "SqlError": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:redshiftdata:describeStatement",
+      "Parameters": { "Id.$": "$.sql.Id" },
+      "ResultSelector": { "Error.$": "$.Error", "Status.$": "$.Status" },
+      "ResultPath": "$.error",
+      "Next": "NotifyFailure"
+    },
+    "NotifySuccess": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${alerts_topic_arn}",
+        "Subject": "Lakehouse pipeline succeeded",
+        "Message.$": "States.Format('Lakehouse pipeline {} succeeded: raw, transformed (DataBrew gate passed), curated, catalog and Redshift marts refreshed.', $$.Execution.Name)"
+      },
+      "End": true
+    },
+    "NotifyFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${alerts_topic_arn}",
+        "Subject": "Lakehouse pipeline failed",
+        "Message.$": "States.Format('Lakehouse pipeline {} failed: {}', $$.Execution.Name, States.JsonToString($.error))"
+      },
+      "ResultPath": null,
+      "Next": "PipelineFailed"
+    },
+    "PipelineFailed": {
+      "Type": "Fail",
+      "Error": "PipelineFailed",
+      "CausePath": "States.JsonToString($.error)"
+    }
+  }
+}

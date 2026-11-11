@@ -1,0 +1,39 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan*
+crash.log
+**/.build/
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Environment-specific backend config (not secret, but per user)
+backend.hcl
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# OS / editor
+.DS_Store
+.vscode/
+.claude/
+CLAUDE.md
+docs/PROJECT_CONTEXT.md
+docs/PROGRESS.md
+docs/DECISIONS.md
+docs/WALKTHROUGH.md
+docs/plans/
+docs/PROJECT_CONTEXT.md
+docs/PROGRESS.md
+docs/DECISIONS.md
+docs/WALKTHROUGH.md
+docs/plans/
