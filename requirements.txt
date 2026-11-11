@@ -1,0 +1,6 @@
+boto3>=1.34
+pytest>=8.0
+# Unit tests of the transformations (tests/unit); Glue 4.0 runs Spark 3.3, tests also pass on 3.5
+pyspark>=3.3,<3.6
+# TPC-H generation in scripts/copy_tpch_source.sh --generate
+duckdb>=1.0
