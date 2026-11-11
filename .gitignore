@@ -27,11 +27,8 @@ venv/
 .vscode/
 .claude/
 CLAUDE.md
-docs/PROJECT_CONTEXT.md
-docs/PROGRESS.md
-docs/DECISIONS.md
-docs/WALKTHROUGH.md
-docs/plans/
+
+# Personal working notes (kept local)
 docs/PROJECT_CONTEXT.md
 docs/PROGRESS.md
 docs/DECISIONS.md

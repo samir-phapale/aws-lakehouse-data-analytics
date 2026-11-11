@@ -1,8 +1,8 @@
 # Landing and raw zones: services and connections
 
 This page covers the sources, the landing zone and the raw zone. The transformed and curated
-zones, DataBrew, the catalog and the consumers are described in
-[the plan doc](../plans/transformed-curated-and-vendor-plan.md) and the [README](../../README.md).
+zones, DataBrew, the catalog and the consumers are in
+[transformed-curated-analytics.md](transformed-curated-analytics.md).
 Everything here is created by `infrastructure/terraform`. Dev names are shown; `<acct>` is the
 account ID.
 
@@ -23,7 +23,8 @@ standing in for the brief's landing zone and lake house accounts: the ingest rol
 landing but not raw, and the lakehouse role can read landing and write raw.
 
 The streaming job appends one JSON-lines micro-batch to landing every 60 seconds. The landing ->
-raw job promotes a day's batches; `run_stream_ingestion.sh` runs it for the stream right after
+raw job promotes the newest stream day already in raw again (it may have been cut off) and every
+later landing day, so late events and days without a run still reach raw; `run_stream_ingestion.sh` runs it for the stream right after
 the replay. Kafka offsets live in `s3://sam-lakehouse-glue-assets-<acct>/checkpoints/stream/<topic>/`,
 so a restarted job continues where it stopped.
 

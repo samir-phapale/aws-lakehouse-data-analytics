@@ -132,7 +132,8 @@ def orders(raw: DataFrame) -> DataFrame:
         estimated.alias("estimated_delivery_at"),
         F.to_date(purchased).alias("purchase_date"),
         F.datediff(delivered, purchased).alias("delivery_days"),
-        F.when(delivered.isNotNull(), delivered > estimated).alias("is_late"),
+        # Dates, not timestamps: same rule as days_late, so a delivery on the due day is on time
+        F.when(delivered.isNotNull(), F.datediff(delivered, estimated) > 0).alias("is_late"),
         F.round(approval_seconds / 3600, 2).alias("approval_hours"),
         # Some "delivered" orders have no delivery date; kept, but flagged
         ((status == "delivered") & delivered.isNull()).alias("dq_missing_delivery"),

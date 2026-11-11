@@ -72,6 +72,20 @@ test_iam_full_wildcard_string_denied if {
 	)
 }
 
+test_iam_unchanged_policy_still_checked if {
+	broad := iam("aws_iam_role_policy", [{"Sid": "TooBroad", "Effect": "Allow", "Action": "s3:*", "Resource": "*"}])
+	denied_with(plan([object.union(broad, {"change": object.union(broad.change, {"actions": ["no-op"]})})]), "TooBroad")
+}
+
+test_iam_unknown_policy_skipped if {
+	no_denies(plan([rc("aws_iam_role_policy", {"name": "p"})]))
+}
+
+test_iam_deleted_policy_ignored if {
+	broad := iam("aws_iam_policy", [{"Effect": "Allow", "Action": "*", "Resource": "*"}])
+	no_denies(plan([object.union(broad, {"change": object.union(broad.change, {"actions": ["delete"]})})]))
+}
+
 test_iam_single_statement_object_denied if {
 	p := plan([rc("aws_iam_policy", {"policy": json.marshal({"Statement": {"Effect": "Allow", "Action": "glue:*", "Resource": "*"}})})])
 	denied_with(p, "glue:*")

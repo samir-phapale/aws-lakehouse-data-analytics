@@ -244,6 +244,8 @@ def agg_seller_performance(fact_items: DataFrame, fact_ord: DataFrame) -> DataFr
 
 
 def agg_delivery_performance(fact_items: DataFrame, sellers: DataFrame) -> DataFrame:
+    """Seller lanes: one shipment per order x seller, so a multi-seller order counts once per seller.
+    Per-order delivery figures come from fact_orders."""
     seller_state = sellers.select("seller_id", F.col("state").alias("seller_state"))
     shipments = (
         fact_items.filter(F.col("delivery_days").isNotNull())
@@ -287,6 +289,16 @@ def agg_review_vs_delivery(fact_ord: DataFrame) -> DataFrame:
             "avg_review_score",
             "bad_review_ratio",
         )
+    )
+
+
+def agg_payment_mix(order_payments: DataFrame) -> DataFrame:
+    """Payment level, so an order split across a card and a voucher counts in both types."""
+    return order_payments.groupBy("payment_type").agg(
+        F.countDistinct("order_id").alias("orders"),
+        F.count(F.lit(1)).alias("payments"),
+        F.sum("payment_value").alias("payment_value"),
+        F.round(F.avg("payment_installments"), 2).alias("avg_installments"),
     )
 
 

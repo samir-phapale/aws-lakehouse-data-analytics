@@ -114,6 +114,22 @@ def test_seller_performance_per_month(table):
     ]
 
 
+def test_payment_mix_counts_every_payment(table):
+    payments = table(
+        [
+            ("o1", 1, "credit_card", 3, Decimal("30.00")),
+            ("o1", 2, "voucher", 1, Decimal("5.00")),
+            ("o2", 1, "credit_card", 1, Decimal("15.00")),
+        ],
+        ["order_id", "payment_sequential", "payment_type", "payment_installments", "payment_value"],
+    )
+    out = c.agg_payment_mix(payments)
+    assert rows(out, "payment_type", "orders", "payments", "payment_value", "avg_installments") == [
+        ("credit_card", 2, 2, Decimal("45.00"), 2.0),
+        ("voucher", 1, 1, Decimal("5.00"), 1.0),
+    ]
+
+
 def test_tpch_segment_names_nations(table):
     tpch = table(
         [(1, 2, "BUILDING", Decimal("100.00")), (2, 2, "BUILDING", Decimal("-50.00")), (3, 24, "MACHINERY", Decimal("10.00"))],

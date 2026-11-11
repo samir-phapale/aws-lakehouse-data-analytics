@@ -1,13 +1,14 @@
 # No wildcard actions ("*" or "<service>:*") in Allow statements. Resource "*" is allowed (some
-# actions, e.g. glue:GetSecurityConfiguration, have no resource-level scoping). Policies whose JSON
-# is only known at apply time are skipped.
+# actions, e.g. glue:GetSecurityConfiguration, have no resource-level scoping). Unchanged policies are
+# checked too: a policy whose JSON is only known at apply time is skipped on its first plan and
+# checked on every plan after it.
 package main
 
 iam_policy_types := ["aws_iam_role_policy", "aws_iam_policy"]
 
 deny contains msg if {
 	some resource_type in iam_policy_types
-	some rc in changes(resource_type)
+	some rc in present(resource_type)
 	is_string(rc.change.after.policy)
 	doc := json.unmarshal(rc.change.after.policy)
 	some statement in as_list(doc.Statement)

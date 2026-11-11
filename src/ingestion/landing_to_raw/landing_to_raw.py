@@ -1,7 +1,8 @@
 """Glue job: promote one day of landing (MySQL CSV exports, stream JSON lines, DataSync files) to raw Delta.
 
 Raw keeps every value as a string plus lineage columns; a rerun replaces only that day's
-ingest_date partition (--INGEST_DATE, "today" = current UTC date).
+ingest_date partition (--INGEST_DATE, "today" = current UTC date). With "today" the stream also
+catches up: see ingest_days.stream_days.
 """
 
 import sys
@@ -12,6 +13,9 @@ from awsglue.job import Job
 from awsglue.utils import getResolvedOptions
 from pyspark.context import SparkContext
 from pyspark.sql.functions import current_timestamp, input_file_name, lit
+from pyspark.sql.functions import max as max_
+
+from ingest_days import folder_days, stream_days
 
 # Header-less files get their column names from here (TPC-H spec, dbgen .tbl layout)
 KNOWN_COLUMNS = {
@@ -55,15 +59,25 @@ def split(value):
 landing = f"s3://{args['LANDING_BUCKET']}/"
 raw = f"s3://{args['RAW_BUCKET']}/"
 sources = split(args["SOURCES"])
-ingest_date = args["INGEST_DATE"]
-if ingest_date == "today":
-    ingest_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-this_day = f"ingest_date = '{ingest_date}'"
+requested_date = args["INGEST_DATE"]
+ingest_date = datetime.now(timezone.utc).strftime("%Y-%m-%d") if requested_date == "today" else requested_date
+
+
+def hadoop_path(path):
+    jvm_path = sc._jvm.org.apache.hadoop.fs.Path(path)
+    return jvm_path, jvm_path.getFileSystem(sc._jsc.hadoopConfiguration())
 
 
 def exists(path):
-    jvm_path = sc._jvm.org.apache.hadoop.fs.Path(path)
-    return jvm_path.getFileSystem(sc._jsc.hadoopConfiguration()).exists(jvm_path)
+    jvm_path, fs = hadoop_path(path)
+    return fs.exists(jvm_path)
+
+
+def subfolders(path):
+    if not exists(path):
+        return []
+    jvm_path, fs = hadoop_path(path)
+    return [status.getPath().toString() for status in fs.listStatus(jvm_path) if status.isDirectory()]
 
 
 def csv_reader(header, delimiter=","):
@@ -77,14 +91,15 @@ def csv_reader(header, delimiter=","):
     )
 
 
-def write_raw(frame, source, target):
+def write_raw(frame, source, target, day=ingest_date):
+    this_day = f"ingest_date = '{day}'"
     now = current_timestamp()
     (
         frame.withColumn("_source_file", input_file_name())
         .withColumn("_ingested_at", now)
         .withColumn("_source", lit(source))
         .withColumn("_raw_loaded_at", now)
-        .withColumn("ingest_date", lit(ingest_date))
+        .withColumn("ingest_date", lit(day))
         .write.format("delta")
         .mode("overwrite")
         .option("replaceWhere", this_day)
@@ -97,13 +112,19 @@ def write_raw(frame, source, target):
     print(f"Wrote {rows} rows to Delta table {target} ({this_day})")
 
 
-def day_folder(landing_table):
-    """The landing folder for this run's day, or None if nothing landed."""
-    path = f"{landing}{landing_table}ingest_date={ingest_date}/"
+def day_folder(landing_table, day=ingest_date):
+    """The landing folder for one day, or None if nothing landed."""
+    path = f"{landing}{landing_table}ingest_date={day}/"
     if exists(path):
         return path
-    print(f"Skipping {landing_table}: nothing landed for {ingest_date}")
+    print(f"Skipping {landing_table}: nothing landed for {day}")
     return None
+
+
+def latest_raw_day(target):
+    if not exists(f"{target}_delta_log/"):
+        return None
+    return spark.read.format("delta").load(target).agg(max_("ingest_date")).first()[0]
 
 
 def read_files(dataset, path):
@@ -129,11 +150,16 @@ if "rds" in sources:
 
 if "stream" in sources:
     topic = args["TOPIC_NAME"]
-    folder = day_folder(f"stream/{topic}/")
-    if folder:
-        # primitivesAsString keeps event values as strings, like every other raw table
-        events = spark.read.option("primitivesAsString", "true").json(folder)
-        write_raw(events, f"msk/{topic}", f"{raw}stream/{topic}/")
+    target = f"{raw}stream/{topic}/"
+    landed = folder_days(subfolders(f"{landing}stream/{topic}/"))
+    days = stream_days(landed, latest_raw_day(target), requested_date)
+    print(f"Stream days to promote: {days or 'none'}")
+    for day in days:
+        folder = day_folder(f"stream/{topic}/", day)
+        if folder:
+            # primitivesAsString keeps event values as strings, like every other raw table
+            events = spark.read.option("primitivesAsString", "true").json(folder)
+            write_raw(events, f"msk/{topic}", target, day)
 
 if "files" in sources:
     # DataSync keeps the latest delivery in place (no date folders); each run snapshots it

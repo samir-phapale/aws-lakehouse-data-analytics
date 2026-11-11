@@ -55,6 +55,7 @@ def test_orders_delivery_metrics(frame):
             ("o1", "c1", "delivered", ts(2018, 1, 1, 10), ts(2018, 1, 1, 12), ts(2018, 1, 2), ts(2018, 1, 11, 10), ts(2018, 1, 10)),
             ("o2", "c1", "Delivered", ts(2018, 1, 1, 10), None, None, None, ts(2018, 1, 10)),
             ("o3", "c2", "shipped", ts(2018, 1, 1, 10), ts(2018, 1, 1, 11), ts(2018, 1, 3), None, ts(2018, 1, 10)),
+            ("o4", "c2", "delivered", ts(2018, 1, 1, 10), ts(2018, 1, 1, 11), ts(2018, 1, 3), ts(2018, 1, 10, 18), ts(2018, 1, 10)),
         ],
         [
             "order_id", "customer_id", "order_status", "order_purchase_timestamp", "order_approved_at",
@@ -66,6 +67,7 @@ def test_orders_delivery_metrics(frame):
         ("o1", "delivered", 10, True, 2.0, False),
         ("o2", "delivered", None, None, None, True),
         ("o3", "shipped", None, None, 1.0, False),
+        ("o4", "delivered", 9, False, 1.0, False),
     ]
 
 

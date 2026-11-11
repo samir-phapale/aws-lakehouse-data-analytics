@@ -1,8 +1,9 @@
--- Average delivery time and late share by customer state
+-- Average delivery time and late share by customer state (fact_orders: one row per order)
 SELECT customer_state,
-       sum(orders)                                              AS orders,
-       round(sum(avg_delivery_days * orders) / sum(orders), 1)  AS avg_delivery_days,
-       round(100 * sum(late_ratio * orders) / sum(orders), 1)   AS late_pct
-FROM agg_delivery_performance
+       count(*)                                                    AS orders,
+       round(avg(delivery_days), 1)                                AS avg_delivery_days,
+       round(100 * avg(CASE WHEN is_late THEN 1.0 ELSE 0.0 END), 1) AS late_pct
+FROM fact_orders
+WHERE delivery_days IS NOT NULL
 GROUP BY customer_state
 ORDER BY avg_delivery_days DESC;

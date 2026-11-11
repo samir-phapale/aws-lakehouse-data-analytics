@@ -60,3 +60,35 @@ def test_missing_report_fails_closed(gate, monkeypatch):
     monkeypatch.setattr(gate, "s3", FakeS3({}))
     result = gate.handler({**EVENT, "report_keys": ["_dq_reports/orders/orders_123.json"]}, None)
     assert result["passed"] is False and result["report_key"] is None
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        {},
+        {"rulesetResults": []},
+        {"rulesetResults": [{"status": "SUCCEEDED", "ruleResults": []}]},
+        {"unexpected": {"shape": True}},
+    ],
+)
+def test_report_without_rule_results_fails_closed(gate, monkeypatch, report):
+    monkeypatch.setattr(gate, "s3", FakeS3({REPORT_KEY: report}))
+    result = gate.handler(EVENT, None)
+    assert result["passed"] is False
+    assert result["failed_rules"] == ["no rule results in report"]
+
+
+def test_error_status_fails(gate, monkeypatch):
+    report = {"rulesetResults": [{"status": "SUCCEEDED", "ruleResults": [{"name": "order_id unique", "status": "ERROR"}]}]}
+    monkeypatch.setattr(gate, "s3", FakeS3({REPORT_KEY: report}))
+    result = gate.handler(EVENT, None)
+    assert result["passed"] is False
+    assert "order_id unique (ERROR)" in result["failed_rules"]
+
+
+def test_rule_without_status_fails(gate, monkeypatch):
+    report = {"rulesetResults": [{"status": "SUCCEEDED", "ruleResults": [{"name": "order_id unique", "status": None}]}]}
+    monkeypatch.setattr(gate, "s3", FakeS3({REPORT_KEY: report}))
+    result = gate.handler(EVENT, None)
+    assert result["passed"] is False
+    assert "order_id unique (MISSING)" in result["failed_rules"]

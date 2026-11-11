@@ -65,6 +65,7 @@ TABLES = {
     "agg_seller_performance": lambda: c.agg_seller_performance(curated("fact_order_items"), curated("fact_orders")),
     "agg_delivery_performance": lambda: c.agg_delivery_performance(curated("fact_order_items"), transformed("sellers")),
     "agg_review_vs_delivery": lambda: c.agg_review_vs_delivery(curated("fact_orders")),
+    "agg_payment_mix": lambda: c.agg_payment_mix(transformed("order_payments")),
     "agg_tpch_customer_segment": lambda: c.agg_tpch_customer_segment(transformed("tpch_customer")),
 }
 
